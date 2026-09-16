@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NGO Dashboard — SoulServe</title>
+  <link rel="stylesheet" href="../css/style.css">
+  <style>
+    .ngo-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+    .food-feed { display: flex; flex-direction: column; gap: 1rem; max-height: 700px; overflow-y: auto; padding-right: 0.5rem; }
+    .food-feed::-webkit-scrollbar { width: 5px; }
+    .food-feed::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
+    .map-section .map-container { height: 500px; }
+    .distance-tag {
+      display: inline-flex; align-items: center; gap: 0.25rem;
+      padding: 0.15rem 0.5rem; background: rgba(59,130,246,0.15); color: var(--accent-blue);
+      border-radius: 50px; font-size: 0.75rem; font-weight: 600;
+    }
+    .claims-section { margin-top: 1.5rem; }
+    .route-info {
+      margin-top: 0.75rem; padding: 0.75rem; background: rgba(16,185,129,0.08);
+      border: 1px solid rgba(16,185,129,0.2); border-radius: var(--radius-md);
+      font-size: 0.85rem; color: var(--text-secondary); display: none;
+    }
+    @media (max-width: 900px) {
+      .ngo-layout { grid-template-columns: 1fr; }
+    }
+    /* Override leaflet routing panel for dark theme */
+    .leaflet-routing-container {
+      background: rgba(17,24,39,0.95) !important;
+      color: #f1f5f9 !important;
+      border: 1px solid rgba(255,255,255,0.1) !important;
+      border-radius: 8px !important;
+      font-family: 'Inter', sans-serif !important;
+      font-size: 0.8rem !important;
+      max-height: 200px !important;
+      overflow-y: auto !important;
+    }
+    .leaflet-routing-alt { color: #94a3b8 !important; }
+    .leaflet-routing-alt h2 { color: #10b981 !important; font-size: 0.9rem !important; }
+    .leaflet-routing-alt h3 { color: #f1f5f9 !important; }
+  </style>
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) {
+        document.documentElement.setAttribute('data-theme', saved);
+      } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+</head>
+<body>
+  <!-- Navbar -->
+  <nav class="navbar">
+    <a href="/" class="navbar-brand">
+      <div class="logo-icon">🍽️</div>
+      SoulServe
+    </a>
+    <div class="navbar-links" id="navLinks"></div>
+  </nav>
+
+  <div class="dashboard">
+    <div class="dashboard-header">
+      <h1>🏢 NGO Dashboard</h1>
+      <p>Find available food nearby, claim it, and get directions for pickup.</p>
+    </div>
+
+    <div class="dashboard-content">
+      <!-- Stats Row -->
+      <div class="stats-grid">
+        <div class="stat-card animate-in delay-1">
+          <div class="stat-icon green">🍽️</div>
+          <div class="stat-info">
+            <h3 id="statAvailable">—</h3>
+            <p>Available Now</p>
+          </div>
+        </div>
+        <div class="stat-card animate-in delay-2">
+          <div class="stat-icon blue">✋</div>
+          <div class="stat-info">
+            <h3 id="statClaimed">—</h3>
+            <p>Total Claimed</p>
+          </div>
+        </div>
+        <div class="stat-card animate-in delay-3">
+          <div class="stat-icon purple">✅</div>
+          <div class="stat-info">
+            <h3 id="statCompleted">—</h3>
+            <p>Pickups Completed</p>
+          </div>
+        </div>
+        <div class="stat-card animate-in delay-4">
+          <div class="stat-icon orange">📦</div>
+          <div class="stat-info">
+            <h3 id="statSaved">—</h3>
+            <p>Kg Food Saved</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main Layout: Feed + Map -->
+      <div class="ngo-layout" style="margin-top: 1.5rem;">
+        <!-- Food Feed -->
+        <div>
+          <div class="section-title" style="display:flex; justify-content:space-between; width:100%;">
+            <span>🍚 Available Food Nearby</span>
+            <span style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted);" id="feedCount"></span>
+          </div>
+          
+          <div class="filters-bar" id="filtersBar">
+            <div class="filter-chip active" data-filter="all" onclick="setFilter('all')">All</div>
+            <div class="filter-chip" data-filter="distance2" onclick="setFilter('distance2')">&lt; 2 km</div>
+            <div class="filter-chip" data-filter="distance5" onclick="setFilter('distance5')">&lt; 5 km</div>
+            <div class="filter-chip" data-filter="fresh" onclick="setFilter('fresh')">Fresh (&lt; 4h)</div>
+            <div class="filter-chip" data-filter="veg" onclick="setFilter('veg')">Veg Only</div>
+          </div>
+
+          <div class="food-feed grid-view" id="foodFeed">
+            <div class="spinner"></div>
+          </div>
+        </div>
+
+        <!-- Map -->
+        <div class="map-section">
+          <div class="section-title" style="display:flex; justify-content:space-between; width:100%;">
+            <span>🗺️ Kitchen Locations</span>
+            <button class="btn btn-outline btn-sm" onclick="clearSelection()" id="clearSelectionBtn" style="display:none;">Clear Selection</button>
+          </div>
+          <div id="ngoMap" class="map-container"></div>
+          <div class="route-info" id="routeInfo">
+            📍 Click <strong>"Get Directions"</strong> on any food card to see the route.
+          </div>
+        </div>
+      </div>
+
+      <!-- Floating Action Bar for batch actions -->
+      <div class="floating-action-bar" id="actionBar">
+        <div style="font-weight:600;"><span id="selectedCount">0</span> items selected</div>
+        <button class="btn btn-primary" onclick="planRouteForSelected()">🗺️ Plan Route</button>
+        <button class="btn btn-outline" onclick="clearSelection()">Cancel</button>
+      </div>
+
+      <!-- My Claims -->
+      <div class="glass-card claims-section">
+        <h3 class="section-title">📋 My Claim History</h3>
+        <div style="overflow-x: auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Kitchen</th>
+                <th>Food</th>
+                <th>Qty</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="claimsTableBody">
+              <tr><td colspan="6" class="empty-state"><div class="spinner"></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../js/api.js"></script>
+  <script src="../js/auth.js"></script>
+  <script src="../js/map.js"></script>
+  <script>
+    if (!requireAuth()) throw 'Not authenticated';
+
+    const user = api.getUser();
+    updateNavbar();
+
+    const ngoLat = user.latitude || 28.6258;
+    const ngoLng = user.longitude || 77.2190;
+    
+    let availableFood = [];
+    let currentFilter = 'all';
+    let selectedKitchenId = null;
+    let selectedItems = new Set();
+
+    async function loadDashboard() {
+      try {
+        await initMap('ngoMap', ngoLat, ngoLng, 12);
+        
+        // Add NGO marker (self)
+        addNGOMarker(ngoLat, ngoLng, `<div style="background:#111827;color:#f1f5f9;padding:0.5rem;font-family:Inter,sans-serif;">
+          <strong>📍 Your Location</strong><br>
+          <span style="color:#94a3b8;">${user.organization || user.name}</span>
+        </div>`);
+
+        const [available, stats, claims] = await Promise.all([
+          api.get('/waste/available'),
+          api.get('/dashboard/ngo/stats'),
+          api.get('/claims/my-claims')
+        ]);
+
+        availableFood = available;
+
+        // Stats
+        document.getElementById('statAvailable').textContent = available.length;
+        document.getElementById('statClaimed').textContent = stats.totalClaimed;
+        document.getElementById('statCompleted').textContent = stats.totalCompleted;
+        document.getElementById('statSaved').textContent = stats.totalQuantitySaved + ' kg';
+
+        // Add kitchen markers to map
+        const kitchensSeen = new Set();
+        available.forEach(item => {
+          if (item.kitchen && item.kitchen.latitude && !kitchensSeen.has(item.kitchen.id)) {
+            kitchensSeen.add(item.kitchen.id);
+            addKitchenMarker(
+              item.kitchen.latitude,
+              item.kitchen.longitude,
+              `<div style="background:#111827;color:#f1f5f9;padding:0.5rem;font-family:Inter,sans-serif;">
+                <strong>🍳 ${item.kitchen.organization || item.kitchen.name}</strong><br>
+                <span style="color:#94a3b8;">${item.kitchen.address || ''}</span><br>
+                <button onclick="window.filterByKitchen(${item.kitchen.id})" class="btn btn-primary btn-sm" style="margin-top:0.5rem; width:100%; justify-content:center;">View Food</button>
+              </div>`
+            );
+          }
+        });
+
+        fitMapToMarkers();
+        applyFilters();
+        renderClaims(claims);
+
+      } catch (err) {
+        console.error('Dashboard error:', err);
+        showToast('Error loading dashboard: ' + err.message, true);
+      }
+    }
+
+    function setFilter(filterType) {
+      currentFilter = filterType;
+      document.querySelectorAll('.filter-chip').forEach(el => {
+        el.classList.toggle('active', el.dataset.filter === filterType);
+      });
+      applyFilters();
+    }
+
+    window.filterByKitchen = function(kitchenId) {
+      selectedKitchenId = kitchenId;
+      document.getElementById('clearSelectionBtn').style.display = 'inline-block';
+      applyFilters();
+    };
+
+    window.clearSelection = function() {
+      selectedKitchenId = null;
+      selectedItems.clear();
+      updateActionBar();
+      document.getElementById('clearSelectionBtn').style.display = 'none';
+      applyFilters();
+    };
+
+    function applyFilters() {
+      let filtered = availableFood;
+
+      if (selectedKitchenId) {
+        filtered = filtered.filter(i => i.kitchenId === selectedKitchenId);
+      }
+
+      if (currentFilter === 'distance2') {
+        filtered = filtered.filter(i => i.distance <= 2);
+      } else if (currentFilter === 'distance5') {
+        filtered = filtered.filter(i => i.distance <= 5);
+      } else if (currentFilter === 'fresh') {
+        filtered = filtered.filter(i => {
+          const hoursOld = (new Date() - new Date(i.createdAt)) / (1000 * 60 * 60);
+          return hoursOld < 4;
+        });
+      } else if (currentFilter === 'veg') {
+        const nonVegTypes = ['biryani', 'curry']; // Simplified logic for demo
+        filtered = filtered.filter(i => !nonVegTypes.includes(i.foodType.toLowerCase()));
+      }
+
+      document.getElementById('feedCount').textContent = `${filtered.length} items found`;
+      renderFoodFeed(filtered);
+    }
+
+    function toggleSelection(id) {
+      if (selectedItems.has(id)) {
+        selectedItems.delete(id);
+      } else {
+        selectedItems.add(id);
+      }
+      updateActionBar();
+      applyFilters(); // Re-render to show highlights
+    }
+
+    function updateActionBar() {
+      const bar = document.getElementById('actionBar');
+      const count = document.getElementById('selectedCount');
+      if (selectedItems.size > 0) {
+        count.textContent = selectedItems.size;
+        bar.classList.add('visible');
+      } else {
+        bar.classList.remove('visible');
+      }
+    }
+
+    function renderFoodFeed(items) {
+      const feed = document.getElementById('foodFeed');
+      if (!items.length) {
+        feed.innerHTML = `<div class="empty-state" style="grid-column: 1 / -1;"><div class="empty-icon">🍽️</div>No available food matches your criteria.</div>`;
+        return;
+      }
+
+      feed.innerHTML = items.map(item => {
+        const hoursOld = (new Date() - new Date(item.createdAt)) / (1000 * 60 * 60);
+        let riskHtml = '';
+        if (hoursOld < 4) {
+          riskHtml = `<span class="badge" style="background:rgba(16,185,129,0.15); color:var(--accent-green);">🟢 Fresh</span>`;
+        } else if (hoursOld < 12) {
+          riskHtml = `<span class="badge" style="background:rgba(245,158,11,0.15); color:var(--accent-orange);">🟡 Medium</span>`;
+        } else {
+          riskHtml = `<span class="badge" style="background:rgba(239,68,68,0.15); color:var(--accent-red);">🔴 High Risk</span>`;
+        }
+
+        const isVeg = !['biryani', 'curry'].includes(item.foodType.toLowerCase());
+        const isSelected = selectedItems.has(item.id);
+
+        return `
+        <div class="food-card ${isSelected ? 'highlight' : ''}">
+          <input type="checkbox" class="food-card-checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelection(${item.id})">
+          <div class="food-card-header">
+            <div class="food-type-icon">${getFoodEmoji(item.foodType)}</div>
+            ${riskHtml}
+          </div>
+          <div class="food-card-body">
+            <h3>${item.quantity} ${item.unit} of ${item.foodType.charAt(0).toUpperCase() + item.foodType.slice(1)}</h3>
+            <div style="margin-top:0.5rem;">
+              <span class="mock-detail-tag">${isVeg ? '🌱 Veg' : '🍗 Mixed'}</span>
+              <span class="mock-detail-tag">📦 Bulk Container</span>
+            </div>
+          </div>
+          <div class="food-card-meta">
+            <span>🍳 ${item.kitchen?.organization || item.kitchen?.name || 'Unknown'}</span>
+            ${item.distance != null ? `<span class="distance-tag">📍 ${item.distance} km</span>` : ''}
+            <span>🕐 ${timeAgo(item.createdAt)}</span>
+          </div>
+          ${item.notes ? `<p style="font-size:0.85rem;color:var(--text-muted);">💬 ${item.notes}</p>` : ''}
+          <div class="food-card-actions">
+            <button class="btn btn-primary btn-sm" style="flex:1; justify-content:center;" onclick="claimFood(${item.id})">✋ Claim</button>
+            ${item.kitchen?.latitude ? `<button class="btn btn-outline btn-sm" onclick="getDirections(${item.kitchen.latitude}, ${item.kitchen.longitude})">🗺️</button>` : ''}
+          </div>
+        </div>
+      `}).join('');
+      
+      // If filtering by a single kitchen, show batch claim button
+      if (selectedKitchenId && items.length > 1) {
+        const batchBtn = document.createElement('div');
+        batchBtn.style.gridColumn = '1 / -1';
+        batchBtn.innerHTML = `<button class="btn btn-secondary" style="width:100%; justify-content:center;" onclick="claimAllFromKitchen(${selectedKitchenId})">✋ Claim All ${items.length} Items from this Kitchen</button>`;
+        feed.prepend(batchBtn);
+      }
+    }
+
+    async function claimFood(wasteId) {
+      try {
+        const result = await api.post(`/claims/${wasteId}/claim`);
+        showToast(result.message);
+        selectedItems.delete(wasteId);
+        updateActionBar();
+        loadDashboard(); // Reload
+      } catch (err) {
+        showToast(err.message, true);
+      }
+    }
+
+    async function claimAllFromKitchen(kitchenId) {
+      try {
+        const itemsToClaim = availableFood.filter(i => i.kitchenId === kitchenId);
+        showToast(`Processing ${itemsToClaim.length} claims...`);
+        
+        // Execute parallel requests for batch processing
+        await Promise.all(itemsToClaim.map(item => api.post(`/claims/${item.id}/claim`)));
+        
+        showToast(`✅ Successfully claimed ${itemsToClaim.length} items!`);
+        clearSelection();
+        loadDashboard();
+      } catch (err) {
+        showToast('Error claiming some items: ' + err.message, true);
+        loadDashboard();
+      }
+    }
+
+    function getDirections(kitchenLat, kitchenLng) {
+      showRoute([
+        { lat: ngoLat, lng: ngoLng },
+        { lat: kitchenLat, lng: kitchenLng }
+      ]);
+      const info = document.getElementById('routeInfo');
+      info.style.display = 'block';
+      info.innerHTML = `🚗 <strong>Route calculated!</strong> From your location to kitchen. Check the map for turn-by-turn directions.`;
+    }
+
+    window.planRouteForSelected = function() {
+      if (selectedItems.size === 0) return;
+      
+      // Build waypoints: Start -> Kitchen 1 -> Kitchen 2 -> ...
+      const waypoints = [{ lat: ngoLat, lng: ngoLng }];
+      const addedKitchens = new Set();
+      
+      selectedItems.forEach(id => {
+        const item = availableFood.find(i => i.id === id);
+        if (item && item.kitchen && item.kitchen.latitude && !addedKitchens.has(item.kitchenId)) {
+          addedKitchens.add(item.kitchenId);
+          waypoints.push({
+            lat: parseFloat(item.kitchen.latitude),
+            lng: parseFloat(item.kitchen.longitude)
+          });
+        }
+      });
+      
+      if (waypoints.length > 1) {
+        showRoute(waypoints);
+        const info = document.getElementById('routeInfo');
+        info.style.display = 'block';
+        info.innerHTML = `🚗 <strong>Multi-stop Route calculated!</strong> Optimized path for ${waypoints.length - 1} pickup locations.`;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        showToast('Selected items do not have valid kitchen locations.', true);
+      }
+    };
+
+    function renderClaims(claims) {
+      const tbody = document.getElementById('claimsTableBody');
+      if (!claims.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-state"><div class="empty-icon">📋</div>No claims yet. Claim available food above!</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = claims.map(claim => `
+        <tr>
+          <td>${formatDate(claim.claimedAt)}</td>
+          <td>${claim.kitchen?.organization || claim.kitchen?.name || '—'}</td>
+          <td>${claim.wasteLog ? getFoodEmoji(claim.wasteLog.foodType) + ' ' + claim.wasteLog.foodType : '—'}</td>
+          <td>${claim.wasteLog ? claim.wasteLog.quantity + ' ' + claim.wasteLog.unit : '—'}</td>
+          <td><span class="badge badge-${claim.status}">${claim.status}</span></td>
+          <td>
+            ${claim.status === 'claimed'
+              ? `<button class="btn btn-primary btn-sm" onclick="completeClaim(${claim.id})">✅ Mark Picked Up</button>`
+              : '—'}
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    async function completeClaim(claimId) {
+      try {
+        const result = await api.patch(`/claims/${claimId}/complete`);
+        showToast(result.message);
+        loadDashboard();
+      } catch (err) {
+        showToast(err.message, true);
+      }
+    }
+
+    // Initial load
+    loadDashboard();
+  </script>
+</body>
+</html>
+
+
