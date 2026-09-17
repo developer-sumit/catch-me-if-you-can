@@ -1,0 +1,29 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE TABLE IF NOT EXISTS users (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  email text NOT NULL UNIQUE,
+  password_hash text NOT NULL,
+  role text NOT NULL CHECK (role IN ('kitchen','ngo')),
+  organization text NOT NULL DEFAULT '', phone text NOT NULL DEFAULT '', address text NOT NULL DEFAULT '',
+  latitude double precision, longitude double precision,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS waste_logs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), kitchen_id uuid NOT NULL REFERENCES users(id),
+  food_type text NOT NULL, quantity double precision NOT NULL CHECK (quantity > 0), unit text NOT NULL DEFAULT 'kg',
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','claimed','completed','expired')),
+  claimed_by uuid REFERENCES users(id), claimed_at timestamptz, notes text NOT NULL DEFAULT '',
+  log_date date NOT NULL DEFAULT CURRENT_DATE, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS claims (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), waste_log_id uuid NOT NULL UNIQUE REFERENCES waste_logs(id),
+  ngo_id uuid NOT NULL REFERENCES users(id), kitchen_id uuid NOT NULL REFERENCES users(id),
+  status text NOT NULL DEFAULT 'claimed' CHECK (status IN ('claimed','picked_up','completed','cancelled')),
+  claimed_at timestamptz NOT NULL DEFAULT now(), completed_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS idx_waste_kitchen_created ON waste_logs(kitchen_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_waste_available ON waste_logs(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_claims_ngo_claimed ON claims(ngo_id, claimed_at DESC);
+
